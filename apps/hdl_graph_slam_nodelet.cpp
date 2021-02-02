@@ -170,6 +170,7 @@ private:
 
     std::lock_guard<std::mutex> lock(keyframe_queue_mutex);
     keyframe_queue.push_back(keyframe);
+
   }
 
   /**

@@ -21,6 +21,7 @@ find_package(catkin REQUIRED COMPONENTS
   interactive_markers
   ndt_omp
   fast_gicp
+  tf_conversions
 )
 catkin_python_setup()
 
