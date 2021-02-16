@@ -8,7 +8,7 @@ set(CMAKE_CXX_FLAGS "-msse -msse2 -msse3 -msse4 -msse4.1 -msse4.2")
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_CURRENT_LIST_DIR}/cmake")
 
 # pcl 1.7 causes a segfault when it is built with debug mode
-set(CMAKE_BUILD_TYPE "RELEASE")
+set(CMAKE_BUILD_TYPE "RELWITHDEBINFO")
 
 find_package(catkin REQUIRED COMPONENTS
   roscpp
@@ -133,10 +133,30 @@ target_link_libraries(hdl_graph_slam_nodelet
 )
 add_dependencies(hdl_graph_slam_nodelet ${PROJECT_NAME}_gencpp)
 
+install(DIRECTORY include
+        DESTINATION ${CATKIN_PACKAGE_INCLUDE_DESTINATION})
+install(DIRECTORY launch/
+        DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}/launch)
+
 catkin_install_python(
   PROGRAMS
     src/${PROJECT_NAME}/bag_player.py
     src/${PROJECT_NAME}/ford2bag.py
     src/${PROJECT_NAME}/map2odom_publisher.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
+)
+
+install(TARGETS
+  hdl_graph_slam_nodelet
+  scan_matching_odometry_nodelet
+  prefiltering_nodelet
+  floor_detection_nodelet
+  ARCHIVE DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
+  LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
+  RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
+
+  install( DIRECTORY
+    launch
+    plugins
+  DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}
 )

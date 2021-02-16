@@ -43,6 +43,7 @@ public:
 
     points_sub = nh.subscribe("/velodyne_points", 64, &PrefilteringNodelet::cloud_callback, this);
     points_pub = nh.advertise<sensor_msgs::PointCloud2>("/filtered_points", 32);
+    points_orig_pub = nh.advertise<sensor_msgs::PointCloud2>("/velodyne_points_orig", 32);
     colored_pub = nh.advertise<sensor_msgs::PointCloud2>("/colored_points", 32);
   }
 
@@ -107,7 +108,24 @@ private:
     if(src_cloud->empty()) {
       return;
     }
+    if(!base_link_frame.empty()) {
+      if(!tf_listener.canTransform(base_link_frame, src_cloud->header.frame_id, ros::Time(0))) {
+        std::cerr << "failed to find transform between " << base_link_frame << " and " << src_cloud->header.frame_id << std::endl;
+      }
 
+      tf::StampedTransform transform;
+      tf_listener.waitForTransform(base_link_frame, src_cloud->header.frame_id, ros::Time(0), ros::Duration(2.0));
+      tf_listener.lookupTransform(base_link_frame, src_cloud->header.frame_id, ros::Time(0), transform);
+
+      pcl::PointCloud<PointT>::Ptr transformed_orig(new pcl::PointCloud<PointT>());
+      pcl_ros::transformPointCloud(*src_cloud, *transformed_orig, transform);
+      transformed_orig->header.frame_id = base_link_frame;
+      sensor_msgs::PointCloud2 cloud2;
+      pcl::toROSMsg(*transformed_orig, cloud2); 
+      cloud2.header.stamp = ros::Time::now();
+      points_orig_pub.publish(cloud2);
+      std::cout << "Original seq number callback: " << src_cloud->header.frame_id << std::endl;
+    }
     src_cloud = deskewing(src_cloud);
 
     // if base_link_frame is defined, transform the input cloud to the frame
@@ -130,8 +148,10 @@ private:
     pcl::PointCloud<PointT>::ConstPtr filtered = distance_filter(src_cloud);
     filtered = downsample(filtered);
     filtered = outlier_removal(filtered);
-
-    points_pub.publish(filtered);
+    sensor_msgs::PointCloud2 cloud3;
+    pcl::toROSMsg(*filtered, cloud3); 
+    cloud3.header.stamp = ros::Time::now();
+    points_pub.publish(cloud3);
   }
 
   pcl::PointCloud<PointT>::ConstPtr downsample(const pcl::PointCloud<PointT>::ConstPtr& cloud) const {
@@ -250,6 +270,7 @@ private:
 
   ros::Subscriber points_sub;
   ros::Publisher points_pub;
+  ros::Publisher points_orig_pub;
 
   ros::Publisher colored_pub;
 
