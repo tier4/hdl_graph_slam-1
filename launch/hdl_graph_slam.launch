@@ -113,7 +113,7 @@
     <!-- update params -->
     <param name="graph_update_interval" value="3.0" />
     <param name="map_cloud_update_interval" value="10.0" />
-    <param name="map_cloud_resolution" value="0.05" />
+    <param name="map_cloud_resolution" value="0.05" /> 
   </node>
 
   <node pkg="hdl_graph_slam" type="map2odom_publisher.py" name="map2odom_publisher"/>

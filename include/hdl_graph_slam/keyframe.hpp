@@ -25,7 +25,7 @@ public:
   using PointT = pcl::PointXYZI;
   using Ptr = std::shared_ptr<KeyFrame>;
 
-  KeyFrame(const ros::Time& stamp, const Eigen::Isometry3d& odom, double accum_distance, const pcl::PointCloud<PointT>::ConstPtr& cloud);
+  KeyFrame(const ros::Time& stamp, const Eigen::Isometry3d& odom, double accum_distance, const pcl::PointCloud<PointT>::ConstPtr& cloud, const pcl::PointCloud<PointT>::ConstPtr& cloud_orig);
   KeyFrame(const std::string& directory, g2o::HyperGraph* graph);
   virtual ~KeyFrame();
 
@@ -40,6 +40,7 @@ public:
   Eigen::Isometry3d odom;                         // odometry (estimated by scan_matching_odometry)
   double accum_distance;                          // accumulated distance from the first node (by scan_matching_odometry)
   pcl::PointCloud<PointT>::ConstPtr cloud;        // point cloud
+  pcl::PointCloud<PointT>::ConstPtr cloud_orig;        // point cloud original
   boost::optional<Eigen::Vector4d> floor_coeffs;  // detected floor's coefficients
   boost::optional<Eigen::Vector3d> utm_coord;     // UTM coord obtained by GPS
 
@@ -60,13 +61,14 @@ public:
   using Ptr = std::shared_ptr<KeyFrameSnapshot>;
 
   KeyFrameSnapshot(const KeyFrame::Ptr& key);
-  KeyFrameSnapshot(const Eigen::Isometry3d& pose, const pcl::PointCloud<PointT>::ConstPtr& cloud);
+  KeyFrameSnapshot(const Eigen::Isometry3d& pose, const pcl::PointCloud<PointT>::ConstPtr& cloud, const pcl::PointCloud<PointT>::ConstPtr& cloud_orig);
 
   ~KeyFrameSnapshot();
 
 public:
   Eigen::Isometry3d pose;                   // pose estimated by graph optimization
   pcl::PointCloud<PointT>::ConstPtr cloud;  // point cloud
+  pcl::PointCloud<PointT>::ConstPtr cloud_orig;  // point cloud original
 };
 
 }  // namespace hdl_graph_slam

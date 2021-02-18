@@ -68,7 +68,7 @@ namespace hdl_graph_slam {
 class HdlGraphSlamNodelet : public nodelet::Nodelet {
 public:
   typedef pcl::PointXYZI PointT;
-  typedef message_filters::sync_policies::ApproximateTime<nav_msgs::Odometry, sensor_msgs::PointCloud2> ApproxSyncPolicy;
+  typedef message_filters::sync_policies::ApproximateTime<sensor_msgs::PointCloud2, sensor_msgs::PointCloud2> ApproxSyncPolicy;
 
   HdlGraphSlamNodelet() {}
   virtual ~HdlGraphSlamNodelet() {}
@@ -148,7 +148,11 @@ public:
     points_topic = private_nh.param<std::string>("points_topic", "/velodyne_points");
 
     // subscribers
-    cloud_sub = nh.subscribe("/filtered_points", 256, &HdlGraphSlamNodelet::cloud_callback, this);
+    // subscribers
+    cloud_orig_sub.reset(new message_filters::Subscriber<sensor_msgs::PointCloud2>(mt_nh, "/velodyne_lidar_orig", 32));
+    cloud_sub.reset(new message_filters::Subscriber<sensor_msgs::PointCloud2>(mt_nh, "/filtered_points", 32));
+    sync.reset(new message_filters::Synchronizer<ApproxSyncPolicy>(ApproxSyncPolicy(32), *cloud_orig_sub, *cloud_sub));
+    sync->registerCallback(boost::bind(&HdlGraphSlamNodelet::cloud_callback, this, _1, _2));
     imu_sub = nh.subscribe("/gpsimu_driver/imu_data", 1024, &HdlGraphSlamNodelet::imu_callback, this);
     floor_sub = nh.subscribe("/floor_detection/floor_coeffs", 1024, &HdlGraphSlamNodelet::floor_coeffs_callback, this);
 
@@ -181,7 +185,7 @@ private:
    * @param odom_msg
    * @param cloud_msg
    */
-  void cloud_callback(const sensor_msgs::PointCloud2ConstPtr& cloud_msg){
+  void cloud_callback(const sensor_msgs::PointCloud2ConstPtr& cloud_orig_msg, const sensor_msgs::PointCloud2ConstPtr& cloud_msg){
     if(!ros::ok()) {
       return;
     }
@@ -190,6 +194,9 @@ private:
 
     pcl::PointCloud<PointT>::Ptr cloud(new pcl::PointCloud<PointT>());
     pcl::fromROSMsg(*cloud_msg, *cloud);
+    
+    pcl::PointCloud<PointT>::Ptr cloud_orig(new pcl::PointCloud<PointT>());
+    pcl::fromROSMsg(*cloud_orig_msg, *cloud_orig);
 
     Eigen::Matrix4f pose = matching(cloud_msg->header.stamp, cloud);
     publish_odometry(cloud_msg->header.stamp, cloud_msg->header.frame_id, pose);
@@ -214,7 +221,7 @@ private:
     }
 
     double accum_d = keyframe_updater->get_accum_distance();
-    KeyFrame::Ptr keyframe(new KeyFrame(stamp, odom, accum_d, cloud));
+    KeyFrame::Ptr keyframe(new KeyFrame(stamp, odom, accum_d, cloud, cloud_orig));
 
     std::lock_guard<std::mutex> lock(keyframe_queue_mutex);
     keyframe_queue.push_back(keyframe);
@@ -269,7 +276,7 @@ private:
     prev_trans = trans;
 
     auto keyframe_trans = matrix2transform(stamp, keyframe_pose, odom_frame_id, "keyframe");
-    keyframe_broadcaster.sendTransform(keyframe_trans);
+  //  keyframe_broadcaster.sendTransform(keyframe_trans);
 
     double delta_trans = trans.block<3, 1>(0, 3).norm();
     double delta_angle = std::acos(Eigen::Quaternionf(trans.block<3, 3>(0, 0)).w());
@@ -288,7 +295,7 @@ private:
 
     geometry_msgs::TransformStamped odom_trans = matrix2transform(stamp, odom, odom_frame_id, base_frame_id);
     // broadcast the transform over tf
-    odom_broadcaster.sendTransform(odom_trans);
+  //  odom_broadcaster.sendTransform(odom_trans);
     return odom;
   }
 
@@ -383,7 +390,7 @@ private:
       const auto& prev_keyframe = i == 0 ? keyframes.back() : keyframe_queue[i - 1];
 
       Eigen::Isometry3d relative_pose = keyframe->odom.inverse() * prev_keyframe->odom;
-      Eigen::MatrixXd information = inf_calclator->calc_information_matrix(keyframe->cloud, prev_keyframe->cloud, relative_pose);
+      Eigen::MatrixXd information = inf_calclator->calc_information_matrix(keyframe->cloud_orig, prev_keyframe->cloud_orig, relative_pose);
       auto edge = graph_slam->add_se3_edge(keyframe->node, prev_keyframe->node, relative_pose, information);
       graph_slam->add_robust_kernel(edge, private_nh.param<std::string>("odometry_edge_robust_kernel", "NONE"), private_nh.param<double>("odometry_edge_robust_kernel_size", 1.0));
     }
@@ -717,7 +724,7 @@ private:
     std::vector<Loop::Ptr> loops = loop_detector->detect(keyframes, new_keyframes, *graph_slam);
     for(const auto& loop : loops) {
       Eigen::Isometry3d relpose(loop->relative_pose.cast<double>());
-      Eigen::MatrixXd information_matrix = inf_calclator->calc_information_matrix(loop->key1->cloud, loop->key2->cloud, relpose);
+      Eigen::MatrixXd information_matrix = inf_calclator->calc_information_matrix(loop->key1->cloud_orig, loop->key2->cloud_orig, relpose);
       auto edge = graph_slam->add_se3_edge(loop->key1->node, loop->key2->node, relpose, information_matrix);
       graph_slam->add_robust_kernel(edge, private_nh.param<std::string>("loop_closure_edge_robust_kernel", "NONE"), private_nh.param<double>("loop_closure_edge_robust_kernel_size", 1.0));
     }
@@ -751,10 +758,10 @@ private:
     keyframes_snapshot_mutex.unlock();
     graph_updated = true;
 
-  //  if(odom2map_pub.getNumSubscribers()) {
-    geometry_msgs::TransformStamped ts = matrix2transform(keyframe->stamp, trans.matrix().cast<float>(), map_frame_id, odom_frame_id);
-    odom2map_pub.publish(ts);
-  //  }
+    // if(odom2map_pub.getNumSubscribers()) {
+    // geometry_msgs::TransformStamped ts = matrix2transform(keyframe->stamp, trans.matrix().cast<float>(), map_frame_id, odom_frame_id);
+    // odom2map_pub.publish(ts);
+    // }
 
     if(markers_pub.getNumSubscribers()) {
       auto markers = create_marker_array(ros::Time::now());
@@ -1073,13 +1080,13 @@ private:
   ros::WallTimer optimization_timer;
   ros::WallTimer map_publish_timer;
 
-  std::unique_ptr<message_filters::Subscriber<nav_msgs::Odometry>> odom_sub;
+  std::unique_ptr<message_filters::Subscriber<sensor_msgs::PointCloud2>> cloud_orig_sub;
+  std::unique_ptr<message_filters::Subscriber<sensor_msgs::PointCloud2>> cloud_sub;
   std::unique_ptr<message_filters::Synchronizer<ApproxSyncPolicy>> sync;
 
   ros::Subscriber gps_sub;
   ros::Subscriber nmea_sub;
   ros::Subscriber navsat_sub;
-  ros::Subscriber cloud_sub;
 
   ros::Subscriber imu_sub;
   ros::Subscriber floor_sub;

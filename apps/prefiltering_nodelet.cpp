@@ -43,7 +43,7 @@ public:
 
     points_sub = nh.subscribe("/velodyne_points", 64, &PrefilteringNodelet::cloud_callback, this);
     points_pub = nh.advertise<sensor_msgs::PointCloud2>("/filtered_points", 32);
-    points_orig_pub = nh.advertise<sensor_msgs::PointCloud2>("/velodyne_points_orig", 32);
+    points_orig_pub = nh.advertise<sensor_msgs::PointCloud2>("/velodyne_lidar_orig", 32);
     colored_pub = nh.advertise<sensor_msgs::PointCloud2>("/colored_points", 32);
   }
 
@@ -120,11 +120,16 @@ private:
       pcl::PointCloud<PointT>::Ptr transformed_orig(new pcl::PointCloud<PointT>());
       pcl_ros::transformPointCloud(*src_cloud, *transformed_orig, transform);
       transformed_orig->header.frame_id = base_link_frame;
+      transformed_orig->header.stamp = src_cloud->header.stamp;
+      pcl::PointCloud<PointT>::ConstPtr filtered = distance_filter(transformed_orig);
+      filtered = downsample(filtered);
+//      filtered = outlier_removal(filtered);
       sensor_msgs::PointCloud2 cloud2;
-      pcl::toROSMsg(*transformed_orig, cloud2); 
-      cloud2.header.stamp = ros::Time::now();
+      pcl::toROSMsg(*filtered, cloud2); 
+
       points_orig_pub.publish(cloud2);
-      std::cout << "Original seq number callback: " << src_cloud->header.frame_id << base_link_frame << std::endl;
+      //cloud2.header.stamp = ros::Time::now();
+//      std::cout << "Original seq number callback: " << src_cloud->header.frame_id << base_link_frame << std::endl;
     }
     src_cloud = deskewing(src_cloud);
 
