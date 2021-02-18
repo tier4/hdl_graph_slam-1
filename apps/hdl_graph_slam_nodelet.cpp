@@ -314,15 +314,15 @@ private:
     geometry_msgs::TransformStamped odom_trans = matrix2transform(stamp, pose, odom_frame_id, base_frame_id);
     // publish the transform
     nav_msgs::Odometry odom;
-    odom.header.stamp = ros::Time::now();
-    odom.header.frame_id = map_frame_id;
+    odom.header.stamp = stamp;
+    odom.header.frame_id = odom_frame_id;
 
     odom.pose.pose.position.x = pose(0, 3);
     odom.pose.pose.position.y = pose(1, 3);
     odom.pose.pose.position.z = pose(2, 3);
     odom.pose.pose.orientation = odom_trans.transform.rotation;
 
-    odom.child_frame_id = base_frame_id;
+    odom.child_frame_id = map_frame_id;
     odom.twist.twist.linear.x = 0.0;
     odom.twist.twist.linear.y = 0.0;
     odom.twist.twist.angular.z = 0.0;
@@ -751,10 +751,10 @@ private:
     keyframes_snapshot_mutex.unlock();
     graph_updated = true;
 
-    if(odom2map_pub.getNumSubscribers()) {
-      geometry_msgs::TransformStamped ts = matrix2transform(keyframe->stamp, trans.matrix().cast<float>(), map_frame_id, odom_frame_id);
-      odom2map_pub.publish(ts);
-    }
+  //  if(odom2map_pub.getNumSubscribers()) {
+    geometry_msgs::TransformStamped ts = matrix2transform(keyframe->stamp, trans.matrix().cast<float>(), map_frame_id, odom_frame_id);
+    odom2map_pub.publish(ts);
+  //  }
 
     if(markers_pub.getNumSubscribers()) {
       auto markers = create_marker_array(ros::Time::now());

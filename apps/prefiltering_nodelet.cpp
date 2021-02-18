@@ -124,7 +124,7 @@ private:
       pcl::toROSMsg(*transformed_orig, cloud2); 
       cloud2.header.stamp = ros::Time::now();
       points_orig_pub.publish(cloud2);
-      std::cout << "Original seq number callback: " << src_cloud->header.frame_id << std::endl;
+      std::cout << "Original seq number callback: " << src_cloud->header.frame_id << base_link_frame << std::endl;
     }
     src_cloud = deskewing(src_cloud);
 
@@ -150,7 +150,7 @@ private:
     filtered = outlier_removal(filtered);
     sensor_msgs::PointCloud2 cloud3;
     pcl::toROSMsg(*filtered, cloud3); 
-    cloud3.header.stamp = ros::Time::now();
+  //  cloud3.header.stamp = ros::Time::now();
     points_pub.publish(cloud3);
   }
 
