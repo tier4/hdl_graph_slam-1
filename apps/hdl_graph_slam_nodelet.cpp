@@ -174,7 +174,7 @@ public:
 
     graph_updated = false;
     double graph_update_interval = private_nh.param<double>("graph_update_interval", 3.0);
-    double map_cloud_update_interval = private_nh.param<double>("map_cloud_update_interval", 10.0);
+    double map_cloud_update_interval = private_nh.param<double>("map_cloud_update_interval", 3.0);
     optimization_timer = mt_nh.createWallTimer(ros::WallDuration(graph_update_interval), &HdlGraphSlamNodelet::optimization_timer_callback, this);
     map_publish_timer = mt_nh.createWallTimer(ros::WallDuration(map_cloud_update_interval), &HdlGraphSlamNodelet::map_points_publish_timer_callback, this);
   }
@@ -1045,7 +1045,7 @@ private:
     keyframes_snapshot_mutex.lock();
     snapshot = keyframes_snapshot;
     keyframes_snapshot_mutex.unlock();
-
+    std::cout << "Keyframes size: " << snapshot.size() << std::endl;
     auto cloud = map_cloud_generator->generate(snapshot, req.resolution);
     if(!cloud) {
       res.success = false;
@@ -1069,6 +1069,10 @@ private:
     int ret = pcl::io::savePCDFileBinary(req.destination, *cloud);
     res.success = ret == 0;
 
+    // Also save the relative pose of last transformation
+    auto prev_trans = snapshot.end()[-2]->pose.matrix();
+    auto delta = prev_trans.inverse() * snapshot.back()->pose.matrix();
+    std::cout << "delta trans: " << delta.matrix() << std::endl;
     return true;
   }
 
