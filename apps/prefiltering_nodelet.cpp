@@ -126,7 +126,7 @@ private:
       filtered = downsample(filtered);
 //      filtered = outlier_removal(filtered);
       sensor_msgs::PointCloud2 cloud2;
-      pcl::toROSMsg(*src_cloud, cloud2); 
+      pcl::toROSMsg(*filtered, cloud2); 
 
       points_orig_pub.publish(cloud2);
       //cloud2.header.stamp = ros::Time::now();

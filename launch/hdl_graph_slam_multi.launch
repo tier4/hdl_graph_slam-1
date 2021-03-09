@@ -24,7 +24,7 @@
     <!-- in case base_link_frame is blank, mapping will be performed in the lidar frame -->
     <param name="base_link_frame" value="base_link" />
     <!-- distance filter -->
-    <param name="use_distance_filter" value="false" />
+    <param name="use_distance_filter" value="true" />
     <param name="distance_near_thresh" value="0.1" />
     <param name="distance_far_thresh" value="100.0" />
     <!-- NONE, VOXELGRID, or APPROX_VOXELGRID -->

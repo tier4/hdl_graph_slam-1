@@ -46,7 +46,7 @@ public:
 
     // too close to the previous frame
     if(dx < keyframe_delta_trans_hdl && da < keyframe_delta_angle_hdl) {
-      std::cout << "keyframe ignored" << std::endl;
+      // std::cout << "keyframe ignored" << std::endl;
       return false;
     }
 

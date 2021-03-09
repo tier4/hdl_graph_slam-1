@@ -28,7 +28,7 @@ Panels:
     Experimental: false
     Name: Time
     SyncMode: 0
-    SyncSource: PointCloud2
+    SyncSource: ""
 Preferences:
   PromptSaveOnExit: true
 Toolbars:
@@ -392,5 +392,5 @@ Window Geometry:
   Views:
     collapsed: true
   Width: 1056
-  X: 124
-  Y: 375
+  X: 922
+  Y: 505
