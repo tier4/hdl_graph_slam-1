@@ -20,8 +20,8 @@ public:
    * @param pnh
    */
   KeyframeUpdater(ros::NodeHandle& pnh) : is_first(true), prev_keypose(Eigen::Isometry3d::Identity()) {
-    keyframe_delta_trans = pnh.param<double>("keyframe_delta_trans", 2.0);
-    keyframe_delta_angle = pnh.param<double>("keyframe_delta_angle", 2.0);
+    keyframe_delta_trans_hdl = pnh.param<double>("keyframe_delta_trans_hdl", 2.0);
+    keyframe_delta_angle_hdl = pnh.param<double>("keyframe_delta_angle_hdl", 2.0);
 
     accum_distance = 0.0;
   }
@@ -45,7 +45,8 @@ public:
     double da = Eigen::AngleAxisd(delta.linear()).angle();
 
     // too close to the previous frame
-    if(dx < keyframe_delta_trans && da < keyframe_delta_angle) {
+    if(dx < keyframe_delta_trans_hdl && da < keyframe_delta_angle_hdl) {
+      // std::cout << "keyframe ignored" << std::endl;
       return false;
     }
 
@@ -64,8 +65,8 @@ public:
 
 private:
   // parameters
-  double keyframe_delta_trans;  //
-  double keyframe_delta_angle;  //
+  double keyframe_delta_trans_hdl;  //
+  double keyframe_delta_angle_hdl;  //
 
   bool is_first;
   double accum_distance;

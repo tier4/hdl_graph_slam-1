@@ -22,6 +22,7 @@
 #include <message_filters/sync_policies/approximate_time.h>
 #include <tf_conversions/tf_eigen.h>
 #include <tf/transform_listener.h>
+#include <tf/transform_broadcaster.h>
 
 #include <std_msgs/Time.h>
 #include <nav_msgs/Odometry.h>
@@ -35,6 +36,10 @@
 
 #include <hdl_graph_slam/SaveMap.h>
 #include <hdl_graph_slam/DumpGraph.h>
+
+#include <pcl/filters/voxel_grid.h>
+#include <pcl/filters/passthrough.h>
+#include <pcl/filters/approximate_voxel_grid.h>
 
 #include <nodelet/nodelet.h>
 #include <pluginlib/class_list_macros.h>
@@ -63,7 +68,7 @@ namespace hdl_graph_slam {
 class HdlGraphSlamNodelet : public nodelet::Nodelet {
 public:
   typedef pcl::PointXYZI PointT;
-  typedef message_filters::sync_policies::ApproximateTime<nav_msgs::Odometry, sensor_msgs::PointCloud2> ApproxSyncPolicy;
+  typedef message_filters::sync_policies::ApproximateTime<sensor_msgs::PointCloud2, sensor_msgs::PointCloud2> ApproxSyncPolicy;
 
   HdlGraphSlamNodelet() {}
   virtual ~HdlGraphSlamNodelet() {}
@@ -103,12 +108,50 @@ public:
     imu_orientation_edge_stddev = private_nh.param<double>("imu_orientation_edge_stddev", 0.1);
     imu_acceleration_edge_stddev = private_nh.param<double>("imu_acceleration_edge_stddev", 3.0);
 
+    // The minimum tranlational distance and rotation angle between keyframes.
+    // If this value is zero, frames are always compared with the previous frame
+    keyframe_delta_trans = private_nh.param<double>("keyframe_delta_trans", 0.25);
+    keyframe_delta_angle = private_nh.param<double>("keyframe_delta_angle", 0.15);
+    keyframe_delta_time = private_nh.param<double>("keyframe_delta_time", 1.0);
+
+    // Registration validation by thresholding
+    transform_thresholding = private_nh.param<bool>("transform_thresholding", false);
+    max_acceptable_trans = private_nh.param<double>("max_acceptable_trans", 1.0);
+    max_acceptable_angle = private_nh.param<double>("max_acceptable_angle", 1.0);
+
+    downsample_method = private_nh.param<std::string>("downsample_method", "VOXELGRID");
+    downsample_resolution = private_nh.param<double>("downsample_resolution", 0.1);
+    if(downsample_method == "VOXELGRID") {
+      std::cout << "downsample: VOXELGRID " << downsample_resolution << std::endl;
+      boost::shared_ptr<pcl::VoxelGrid<PointT>> voxelgrid(new pcl::VoxelGrid<PointT>());
+      voxelgrid->setLeafSize(downsample_resolution, downsample_resolution, downsample_resolution);
+      downsample_filter = voxelgrid;
+    } else if(downsample_method == "APPROX_VOXELGRID") {
+      std::cout << "downsample: APPROX_VOXELGRID " << downsample_resolution << std::endl;
+      boost::shared_ptr<pcl::ApproximateVoxelGrid<PointT>> approx_voxelgrid(new pcl::ApproximateVoxelGrid<PointT>());
+      approx_voxelgrid->setLeafSize(downsample_resolution, downsample_resolution, downsample_resolution);
+      downsample_filter = approx_voxelgrid;
+    } else {
+      if(downsample_method != "NONE") {
+        std::cerr << "warning: unknown downsampling type (" << downsample_method << ")" << std::endl;
+        std::cerr << "       : use passthrough filter" << std::endl;
+      }
+      std::cout << "downsample: NONE" << std::endl;
+      boost::shared_ptr<pcl::PassThrough<PointT>> passthrough(new pcl::PassThrough<PointT>());
+      downsample_filter = passthrough;
+    }
+
+    registration = select_registration_method(private_nh);
+
+
+
     points_topic = private_nh.param<std::string>("points_topic", "/velodyne_points");
 
     // subscribers
-    odom_sub.reset(new message_filters::Subscriber<nav_msgs::Odometry>(mt_nh, "/odom", 256));
+    // subscribers
+    cloud_orig_sub.reset(new message_filters::Subscriber<sensor_msgs::PointCloud2>(mt_nh, "/velodyne_lidar_orig", 32));
     cloud_sub.reset(new message_filters::Subscriber<sensor_msgs::PointCloud2>(mt_nh, "/filtered_points", 32));
-    sync.reset(new message_filters::Synchronizer<ApproxSyncPolicy>(ApproxSyncPolicy(32), *odom_sub, *cloud_sub));
+    sync.reset(new message_filters::Synchronizer<ApproxSyncPolicy>(ApproxSyncPolicy(32), *cloud_orig_sub, *cloud_sub));
     sync->registerCallback(boost::bind(&HdlGraphSlamNodelet::cloud_callback, this, _1, _2));
     imu_sub = nh.subscribe("/gpsimu_driver/imu_data", 1024, &HdlGraphSlamNodelet::imu_callback, this);
     floor_sub = nh.subscribe("/floor_detection/floor_coeffs", 1024, &HdlGraphSlamNodelet::floor_coeffs_callback, this);
@@ -124,13 +167,14 @@ public:
     odom2map_pub = mt_nh.advertise<geometry_msgs::TransformStamped>("/hdl_graph_slam/odom2pub", 16);
     map_points_pub = mt_nh.advertise<sensor_msgs::PointCloud2>("/hdl_graph_slam/map_points", 1, true);
     read_until_pub = mt_nh.advertise<std_msgs::Header>("/hdl_graph_slam/read_until", 32);
+    odom_pub = nh.advertise<nav_msgs::Odometry>("/odom_new", 32);
 
     dump_service_server = mt_nh.advertiseService("/hdl_graph_slam/dump", &HdlGraphSlamNodelet::dump_service, this);
     save_map_service_server = mt_nh.advertiseService("/hdl_graph_slam/save_map", &HdlGraphSlamNodelet::save_map_service, this);
 
     graph_updated = false;
     double graph_update_interval = private_nh.param<double>("graph_update_interval", 3.0);
-    double map_cloud_update_interval = private_nh.param<double>("map_cloud_update_interval", 10.0);
+    double map_cloud_update_interval = private_nh.param<double>("map_cloud_update_interval", 3.0);
     optimization_timer = mt_nh.createWallTimer(ros::WallDuration(graph_update_interval), &HdlGraphSlamNodelet::optimization_timer_callback, this);
     map_publish_timer = mt_nh.createWallTimer(ros::WallDuration(map_cloud_update_interval), &HdlGraphSlamNodelet::map_points_publish_timer_callback, this);
   }
@@ -141,12 +185,23 @@ private:
    * @param odom_msg
    * @param cloud_msg
    */
-  void cloud_callback(const nav_msgs::OdometryConstPtr& odom_msg, const sensor_msgs::PointCloud2::ConstPtr& cloud_msg) {
+  void cloud_callback(const sensor_msgs::PointCloud2ConstPtr& cloud_orig_msg, const sensor_msgs::PointCloud2ConstPtr& cloud_msg){
+    if(!ros::ok()) {
+      return;
+    }
+    std::cout << "Came inside callback: " << cloud_msg->header.seq << std::endl;
     const ros::Time& stamp = cloud_msg->header.stamp;
-    Eigen::Isometry3d odom = odom2isometry(odom_msg);
 
     pcl::PointCloud<PointT>::Ptr cloud(new pcl::PointCloud<PointT>());
     pcl::fromROSMsg(*cloud_msg, *cloud);
+    
+    pcl::PointCloud<PointT>::Ptr cloud_orig(new pcl::PointCloud<PointT>());
+    pcl::fromROSMsg(*cloud_orig_msg, *cloud_orig);
+
+    Eigen::Matrix4f pose = matching(cloud_msg->header.stamp, cloud);
+    publish_odometry(cloud_msg->header.stamp, cloud_msg->header.frame_id, pose);
+    Eigen::Isometry3d odom;
+    odom.matrix() = pose.cast <double> (); 
     if(base_frame_id.empty()) {
       base_frame_id = cloud_msg->header.frame_id;
     }
@@ -166,10 +221,120 @@ private:
     }
 
     double accum_d = keyframe_updater->get_accum_distance();
-    KeyFrame::Ptr keyframe(new KeyFrame(stamp, odom, accum_d, cloud));
+    KeyFrame::Ptr keyframe(new KeyFrame(stamp, odom, accum_d, cloud, cloud_orig));
 
     std::lock_guard<std::mutex> lock(keyframe_queue_mutex);
     keyframe_queue.push_back(keyframe);
+
+  }
+
+ /**
+   * @brief estimate the relative pose between an input cloud and a keyframe cloud
+   * @param stamp  the timestamp of the input cloud
+   * @param cloud  the input cloud
+   * @return the relative pose between the input cloud and the keyframe cloud
+   */
+  Eigen::Matrix4f matching(const ros::Time& stamp, const pcl::PointCloud<PointT>::ConstPtr& cloud) {
+    if(!keyframe) {
+      prev_trans.setIdentity();
+      keyframe_pose.setIdentity();
+      keyframe_stamp = stamp;
+      keyframe = downsample(cloud);
+      registration->setInputTarget(keyframe);
+      return Eigen::Matrix4f::Identity();
+    }
+
+    auto filtered = downsample(cloud);
+    registration->setInputSource(filtered);
+
+    Eigen::Isometry3f msf_delta = Eigen::Isometry3f::Identity();
+
+    pcl::PointCloud<PointT>::Ptr aligned(new pcl::PointCloud<PointT>());
+    registration->align(*aligned, prev_trans * msf_delta.matrix());
+
+    if(!registration->hasConverged()) {
+      std::cout << "scan matching has not converged!!" << std::endl;
+      std::cout << "ignore this frame(" << stamp << ")" << std::endl;
+      return keyframe_pose * prev_trans;
+    }
+
+    Eigen::Matrix4f trans = registration->getFinalTransformation();
+    Eigen::Matrix4f odom = keyframe_pose * trans;
+
+    if(transform_thresholding) {
+      Eigen::Matrix4f delta = prev_trans.inverse() * trans;
+      double dx = delta.block<3, 1>(0, 3).norm();
+      double da = std::acos(Eigen::Quaternionf(delta.block<3, 3>(0, 0)).w());
+
+      if(dx > max_acceptable_trans || da > max_acceptable_angle) {
+        std::cout << "too large transform!!  " << dx << "[m] " << da << "[rad]" << std::endl;
+        std::cout << "ignore this frame(" << stamp << ")" << std::endl;
+        return keyframe_pose * prev_trans;
+      }
+    }
+
+    prev_trans = trans;
+
+    auto keyframe_trans = matrix2transform(stamp, keyframe_pose, odom_frame_id, "keyframe");
+  //  keyframe_broadcaster.sendTransform(keyframe_trans);
+
+    double delta_trans = trans.block<3, 1>(0, 3).norm();
+    double delta_angle = std::acos(Eigen::Quaternionf(trans.block<3, 3>(0, 0)).w());
+    double delta_time = (stamp - keyframe_stamp).toSec();
+    if(delta_trans > keyframe_delta_trans || delta_angle > keyframe_delta_angle || delta_time > keyframe_delta_time) {
+      keyframe = filtered;
+      registration->setInputTarget(keyframe);
+
+      keyframe_pose = odom;
+      keyframe_stamp = stamp;
+      prev_trans.setIdentity();
+    }
+
+    // auto fitness = registration->getFitnessScore(2.5);
+    // std::cout << "Fitness score: " << fitness  << std::endl;
+
+    geometry_msgs::TransformStamped odom_trans = matrix2transform(stamp, odom, odom_frame_id, base_frame_id);
+    // broadcast the transform over tf
+  //  odom_broadcaster.sendTransform(odom_trans);
+    return odom;
+  }
+
+    /**
+   * @brief downsample a point cloud
+   * @param cloud  input cloud
+   * @return downsampled point cloud
+   */
+  pcl::PointCloud<PointT>::ConstPtr downsample(const pcl::PointCloud<PointT>::ConstPtr& cloud) const {
+    if(!downsample_filter) {
+      return cloud;
+    }
+
+    pcl::PointCloud<PointT>::Ptr filtered(new pcl::PointCloud<PointT>());
+    downsample_filter->setInputCloud(cloud);
+    downsample_filter->filter(*filtered);
+
+    return filtered;
+  }
+
+  void publish_odometry(const ros::Time& stamp, const std::string& base_frame_id, const Eigen::Matrix4f& pose) {
+    // publish transform stamped for IMU integration
+    geometry_msgs::TransformStamped odom_trans = matrix2transform(stamp, pose, odom_frame_id, base_frame_id);
+    // publish the transform
+    nav_msgs::Odometry odom;
+    odom.header.stamp = stamp;
+    odom.header.frame_id = odom_frame_id;
+
+    odom.pose.pose.position.x = pose(0, 3);
+    odom.pose.pose.position.y = pose(1, 3);
+    odom.pose.pose.position.z = pose(2, 3);
+    odom.pose.pose.orientation = odom_trans.transform.rotation;
+
+    odom.child_frame_id = map_frame_id;
+    odom.twist.twist.linear.x = 0.0;
+    odom.twist.twist.linear.y = 0.0;
+    odom.twist.twist.angular.z = 0.0;
+
+    odom_pub.publish(odom);
   }
 
   /**
@@ -225,7 +390,7 @@ private:
       const auto& prev_keyframe = i == 0 ? keyframes.back() : keyframe_queue[i - 1];
 
       Eigen::Isometry3d relative_pose = keyframe->odom.inverse() * prev_keyframe->odom;
-      Eigen::MatrixXd information = inf_calclator->calc_information_matrix(keyframe->cloud, prev_keyframe->cloud, relative_pose);
+      Eigen::MatrixXd information = inf_calclator->calc_information_matrix(keyframe->cloud_orig, prev_keyframe->cloud_orig, relative_pose);
       auto edge = graph_slam->add_se3_edge(keyframe->node, prev_keyframe->node, relative_pose, information);
       graph_slam->add_robust_kernel(edge, private_nh.param<std::string>("odometry_edge_robust_kernel", "NONE"), private_nh.param<double>("odometry_edge_robust_kernel_size", 1.0));
     }
@@ -559,7 +724,7 @@ private:
     std::vector<Loop::Ptr> loops = loop_detector->detect(keyframes, new_keyframes, *graph_slam);
     for(const auto& loop : loops) {
       Eigen::Isometry3d relpose(loop->relative_pose.cast<double>());
-      Eigen::MatrixXd information_matrix = inf_calclator->calc_information_matrix(loop->key1->cloud, loop->key2->cloud, relpose);
+      Eigen::MatrixXd information_matrix = inf_calclator->calc_information_matrix(loop->key1->cloud_orig, loop->key2->cloud_orig, relpose);
       auto edge = graph_slam->add_se3_edge(loop->key1->node, loop->key2->node, relpose, information_matrix);
       graph_slam->add_robust_kernel(edge, private_nh.param<std::string>("loop_closure_edge_robust_kernel", "NONE"), private_nh.param<double>("loop_closure_edge_robust_kernel_size", 1.0));
     }
@@ -593,15 +758,34 @@ private:
     keyframes_snapshot_mutex.unlock();
     graph_updated = true;
 
-    if(odom2map_pub.getNumSubscribers()) {
-      geometry_msgs::TransformStamped ts = matrix2transform(keyframe->stamp, trans.matrix().cast<float>(), map_frame_id, odom_frame_id);
-      odom2map_pub.publish(ts);
-    }
+    // if(odom2map_pub.getNumSubscribers()) {
+    // geometry_msgs::TransformStamped ts = matrix2transform(keyframe->stamp, trans.matrix().cast<float>(), map_frame_id, odom_frame_id);
+    // odom2map_pub.publish(ts);
+    // }
 
     if(markers_pub.getNumSubscribers()) {
       auto markers = create_marker_array(ros::Time::now());
       markers_pub.publish(markers);
     }
+
+    counter += keyframes.size();
+    std::cout << "Num of keyframes processed so far: " << counter  << std::endl;
+    // for(int i = 0; i < keyframes.size(); i++) {
+    // // publish the transform
+    //   nav_msgs::Odometry odom;
+    //   odom.header.stamp = ros::Time::now();
+    //   odom.header.frame_id = map_frame_id;
+    //   Eigen::Vector3d pos = keyframes[i]->node->estimate().translation();
+    //   odom.pose.pose.position.x = pos.x();
+    //   odom.pose.pose.position.y = pos.y();
+    //   odom.pose.pose.position.z = pos.z();
+
+    //   odom.child_frame_id = base_frame_id;
+    //   odom.twist.twist.linear.x = 0.0;
+    //   odom.twist.twist.linear.y = 0.0;
+    //   odom.twist.twist.angular.z = 0.0;
+    //   odom_pub.publish(odom);
+    // }
   }
 
   /**
@@ -861,7 +1045,7 @@ private:
     keyframes_snapshot_mutex.lock();
     snapshot = keyframes_snapshot;
     keyframes_snapshot_mutex.unlock();
-
+    std::cout << "Keyframes size: " << snapshot.size() << std::endl;
     auto cloud = map_cloud_generator->generate(snapshot, req.resolution);
     if(!cloud) {
       res.success = false;
@@ -885,6 +1069,10 @@ private:
     int ret = pcl::io::savePCDFileBinary(req.destination, *cloud);
     res.success = ret == 0;
 
+    // Also save the relative pose of last transformation
+    auto prev_trans = snapshot.end()[-2]->pose.matrix();
+    auto delta = prev_trans.inverse() * snapshot.back()->pose.matrix();
+    std::cout << "delta trans: " << delta.matrix() << std::endl;
     return true;
   }
 
@@ -896,7 +1084,7 @@ private:
   ros::WallTimer optimization_timer;
   ros::WallTimer map_publish_timer;
 
-  std::unique_ptr<message_filters::Subscriber<nav_msgs::Odometry>> odom_sub;
+  std::unique_ptr<message_filters::Subscriber<sensor_msgs::PointCloud2>> cloud_orig_sub;
   std::unique_ptr<message_filters::Subscriber<sensor_msgs::PointCloud2>> cloud_sub;
   std::unique_ptr<message_filters::Synchronizer<ApproxSyncPolicy>> sync;
 
@@ -919,6 +1107,7 @@ private:
   std::string points_topic;
   ros::Publisher read_until_pub;
   ros::Publisher map_points_pub;
+  ros::Publisher odom_pub;
 
   tf::TransformListener tf_listener;
 
@@ -929,6 +1118,29 @@ private:
   std::string base_frame_id;
   std::mutex keyframe_queue_mutex;
   std::deque<KeyFrame::Ptr> keyframe_queue;
+
+  Eigen::Matrix4f prev_trans;                  // previous estimated transform from keyframe
+  Eigen::Matrix4f keyframe_pose;               // keyframe pose
+  ros::Time keyframe_stamp;                    // keyframe time
+  pcl::PointCloud<PointT>::ConstPtr keyframe;  // keyframe point cloud
+  std::string downsample_method;
+  double downsample_resolution;
+  pcl::Filter<PointT>::Ptr downsample_filter;
+  pcl::Registration<PointT, PointT>::Ptr registration;
+  tf::TransformBroadcaster odom_broadcaster;
+  tf::TransformBroadcaster keyframe_broadcaster;
+  int counter = 0;
+
+  // keyframe parameters
+  double keyframe_delta_trans;  // minimum distance between keyframes
+  double keyframe_delta_angle;  //
+  double keyframe_delta_time;   //
+
+  // registration validation by thresholding
+  bool transform_thresholding;  //
+  double max_acceptable_trans;  //
+  double max_acceptable_angle;
+
 
   // gps queue
   double gps_time_offset;

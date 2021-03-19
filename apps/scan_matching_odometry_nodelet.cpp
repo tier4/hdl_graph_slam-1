@@ -109,7 +109,6 @@ private:
     if(!ros::ok()) {
       return;
     }
-
     pcl::PointCloud<PointT>::Ptr cloud(new pcl::PointCloud<PointT>());
     pcl::fromROSMsg(*cloud_msg, *cloud);
 
@@ -188,8 +187,8 @@ private:
     registration->align(*aligned, prev_trans * msf_delta.matrix());
 
     if(!registration->hasConverged()) {
-      NODELET_INFO_STREAM("scan matching has not converged!!");
-      NODELET_INFO_STREAM("ignore this frame(" << stamp << ")");
+      std::cout << "scan matching has not converged!!" << std::endl;
+      std::cout << "ignore this frame(" << stamp << ")" << std::endl;
       return keyframe_pose * prev_trans;
     }
 
@@ -202,8 +201,8 @@ private:
       double da = std::acos(Eigen::Quaternionf(delta.block<3, 3>(0, 0)).w());
 
       if(dx > max_acceptable_trans || da > max_acceptable_angle) {
-        NODELET_INFO_STREAM("too large transform!!  " << dx << "[m] " << da << "[rad]");
-        NODELET_INFO_STREAM("ignore this frame(" << stamp << ")");
+        std::cout << "too large transform!!  " << dx << "[m] " << da << "[rad]" << std::endl;
+        std::cout << "ignore this frame(" << stamp << ")" << std::endl;
         return keyframe_pose * prev_trans;
       }
     }
@@ -232,6 +231,8 @@ private:
       aligned_points_pub.publish(aligned);
     }
 
+    // auto fitness = registration->getFitnessScore(2.5);
+    // std::cout << "Fitness score: " << fitness  << std::endl;
     return odom;
   }
 
