@@ -18,6 +18,7 @@
 #include <pcl/point_cloud.h>
 #include <pcl/filters/passthrough.h>
 #include <pcl/filters/voxel_grid.h>
+#include <pcl/octree/octree_search.h>
 #include <pcl/filters/approximate_voxel_grid.h>
 #include <pcl/filters/radius_outlier_removal.h>
 #include <pcl/filters/statistical_outlier_removal.h>
@@ -49,8 +50,8 @@ public:
 
 private:
   void initialize_params() {
-    std::string downsample_method = private_nh.param<std::string>("downsample_method", "VOXELGRID");
-    double downsample_resolution = private_nh.param<double>("downsample_resolution", 0.1);
+    downsample_method = private_nh.param<std::string>("downsample_method", "VOXELGRID");
+    downsample_resolution = private_nh.param<double>("downsample_resolution", 0.1);
 
     if(downsample_method == "VOXELGRID") {
       std::cout << "downsample: VOXELGRID " << downsample_resolution << std::endl;
@@ -62,6 +63,8 @@ private:
       boost::shared_ptr<pcl::ApproximateVoxelGrid<PointT>> approx_voxelgrid(new pcl::ApproximateVoxelGrid<PointT>());
       approx_voxelgrid->setLeafSize(downsample_resolution, downsample_resolution, downsample_resolution);
       downsample_filter = approx_voxelgrid;
+    } else if(downsample_method == "OCTREEGRID") {
+      std::cout << "downsample: OCTREEGRID " << downsample_resolution << std::endl;
     } else {
       if(downsample_method != "NONE") {
         std::cerr << "warning: unknown downsampling type (" << downsample_method << ")" << std::endl;
@@ -166,9 +169,21 @@ private:
     }
 
     pcl::PointCloud<PointT>::Ptr filtered(new pcl::PointCloud<PointT>());
-    downsample_filter->setInputCloud(cloud);
-    downsample_filter->filter(*filtered);
-    filtered->header = cloud->header;
+    if(downsample_method == "OCTREEGRID") {
+      pcl::octree::OctreePointCloud<PointT> octree(downsample_resolution);
+      octree.setInputCloud(cloud);
+      octree.addPointsFromInputCloud();
+
+      octree.getOccupiedVoxelCenters(filtered->points);
+
+      filtered->width = filtered->size();
+      filtered->height = 1;
+      filtered->is_dense = false;
+    } else {
+      downsample_filter->setInputCloud(cloud);
+      downsample_filter->filter(*filtered);
+      filtered->header = cloud->header;
+    }
 
     return filtered;
   }
@@ -287,9 +302,10 @@ private:
   bool use_distance_filter;
   double distance_near_thresh;
   double distance_far_thresh;
-
+  std::string downsample_method;
   pcl::Filter<PointT>::Ptr downsample_filter;
   pcl::Filter<PointT>::Ptr outlier_removal_filter;
+  double downsample_resolution;
 };
 
 }  // namespace hdl_graph_slam
