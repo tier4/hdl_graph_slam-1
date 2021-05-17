@@ -18,7 +18,7 @@
   <!-- **************************************processing top lidar nodelets**************************************-->
   <!-- prefiltering_nodelet -->
   <node pkg="nodelet" type="nodelet" name="prefiltering_nodelet_top" args="load hdl_graph_slam/PrefilteringNodelet $(arg nodelet_manager)">
-    <remap from="/velodyne_points" to="/sensing/lidar/right_upper/pandar_points_ex" />
+    <remap from="/velodyne_points" to="/sensing/lidar/top/pointcloud_raw_ex" />
     <remap from="/velodyne_lidar_orig" to="/velodyne_lidar_top" />
     <remap from="/filtered_points" to="/filtered_points_top" />
     <!-- in case base_link_frame is blank, mapping will be performed in the lidar frame -->
@@ -142,7 +142,7 @@
   <!-- **************************************processing left lidar nodelets**************************************-->
   <!-- prefiltering_nodelet -->
   <node pkg="nodelet" type="nodelet" name="prefiltering_nodelet_left" args="load hdl_graph_slam/PrefilteringNodelet $(arg nodelet_manager)">
-    <remap from="/velodyne_points" to="/sensing/lidar/left_upper/pandar_points_ex" />
+    <remap from="/velodyne_points" to="/sensing/lidar/left/pointcloud_raw_ex" />
     <remap from="/velodyne_lidar_orig" to="/velodyne_lidar_left" />
     <remap from="/filtered_points" to="/filtered_points_left" />
     <!-- in case base_link_frame is blank, mapping will be performed in the lidar frame -->
@@ -265,7 +265,7 @@
   <!-- **************************************processing right lidar nodelets**************************************-->
   <!-- prefiltering_nodelet -->
   <node pkg="nodelet" type="nodelet" name="prefiltering_nodelet_right" args="load hdl_graph_slam/PrefilteringNodelet $(arg nodelet_manager)">
-    <remap from="/velodyne_points" to="/sensing/lidar/right_upper/pandar_points_ex" />
+    <remap from="/velodyne_points" to="/sensing/lidar/right/pointcloud_raw_ex" />
     <remap from="/velodyne_lidar_orig" to="/velodyne_lidar_right" />
     <remap from="/filtered_points" to="/filtered_points_right" />
     <!-- in case base_link_frame is blank, mapping will be performed in the lidar frame -->
