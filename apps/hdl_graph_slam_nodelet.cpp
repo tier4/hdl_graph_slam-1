@@ -40,6 +40,7 @@
 #include <pcl/filters/voxel_grid.h>
 #include <pcl/filters/passthrough.h>
 #include <pcl/filters/approximate_voxel_grid.h>
+#include <pcl/octree/octree_search.h>
 
 #include <nodelet/nodelet.h>
 #include <pluginlib/class_list_macros.h>
@@ -239,12 +240,12 @@ private:
       prev_trans.setIdentity();
       keyframe_pose.setIdentity();
       keyframe_stamp = stamp;
-      keyframe = downsample(cloud);
+      keyframe = cloud; //downsample(cloud);
       registration->setInputTarget(keyframe);
       return Eigen::Matrix4f::Identity();
     }
 
-    auto filtered = downsample(cloud);
+    auto filtered = cloud; //downsample(cloud);
     registration->setInputSource(filtered);
 
     Eigen::Isometry3f msf_delta = Eigen::Isometry3f::Identity();
@@ -257,7 +258,8 @@ private:
       std::cout << "ignore this frame(" << stamp << ")" << std::endl;
       return keyframe_pose * prev_trans;
     }
-
+    auto fitness = registration->getFitnessScore(2.5);
+    std::cout << "Fitness score: " << fitness  << std::endl;
     Eigen::Matrix4f trans = registration->getFinalTransformation();
     Eigen::Matrix4f odom = keyframe_pose * trans;
 
@@ -308,10 +310,21 @@ private:
     if(!downsample_filter) {
       return cloud;
     }
+    double resolution = 0.01;
+    pcl::octree::OctreePointCloud<PointT> octree(resolution);
+    octree.setInputCloud(cloud);
+    octree.addPointsFromInputCloud();
 
     pcl::PointCloud<PointT>::Ptr filtered(new pcl::PointCloud<PointT>());
-    downsample_filter->setInputCloud(cloud);
-    downsample_filter->filter(*filtered);
+    octree.getOccupiedVoxelCenters(filtered->points);
+
+    filtered->width = filtered->size();
+    filtered->height = 1;
+    filtered->is_dense = false;
+
+    // pcl::PointCloud<PointT>::Ptr filtered(new pcl::PointCloud<PointT>());
+    // downsample_filter->setInputCloud(cloud);
+    // downsample_filter->filter(*filtered);
 
     return filtered;
   }
@@ -512,6 +525,7 @@ private:
 
     auto remove_loc = std::upper_bound(gps_queue.begin(), gps_queue.end(), keyframes.back()->stamp, [=](const ros::Time& stamp, const geographic_msgs::GeoPointStampedConstPtr& geopoint) { return stamp < geopoint->header.stamp; });
     gps_queue.erase(gps_queue.begin(), remove_loc);
+    std::cout << "gps used: " << updated << std::endl;
     return updated;
   }
 
